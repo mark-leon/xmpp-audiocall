@@ -1,0 +1,60 @@
+<resources>
+    <string name="app_name">XMPP Audio Call</string>
+
+    <!-- Main Activity Strings -->
+    <string name="title_xmpp_audio_call">XMPP Audio Call</string>
+    <string name="subtitle_webrtc">WebRTC Voice Calling</string>
+    <string name="login_credentials">Login Credentials</string>
+    <string name="hint_username">Username (e.g., user@server.com)</string>
+    <string name="hint_password">Password</string>
+    <string name="hint_server">Server (e.g., example.com)</string>
+    <string name="btn_login">Login</string>
+    <string name="make_call">Make a Call</string>
+    <string name="hint_contact_jid">Contact JID (e.g., user@server.com)</string>
+    <string name="btn_start_call">Start Call</string>
+    <string name="connection_status">Connection Status</string>
+    <string name="status_disconnected">Status: Disconnected</string>
+    <string name="info_message">ℹ️ Make sure both devices are connected to the XMPP server before making a call.</string>
+
+    <!-- Call Activity Strings -->
+    <string name="contact_name">Contact Name</string>
+    <string name="connecting">Connecting…</string>
+    <string name="call_duration">00:00</string>
+    <string name="audio_active">Audio Active</string>
+    <string name="btn_mute">Mute</string>
+    <string name="btn_unmute">Unmute</string>
+    <string name="btn_end_call">End Call</string>
+
+    <!-- Toast Messages -->
+    <string name="permissions_granted">Permissions granted</string>
+    <string name="permissions_required">Permissions required for audio calls</string>
+    <string name="enter_credentials">Please enter username and password</string>
+    <string name="enter_contact">Please enter contact JID</string>
+    <string name="invalid_jid">Contact must be in format: user@server</string>
+    <string name="connection_failed">Failed to connect: %s</string>
+    <string name="call_rejected">Call was rejected</string>
+    <string name="call_ended">Call ended</string>
+    <string name="call_ended_remote">Call ended by remote peer</string>
+    <string name="call_connected">Call connected</string>
+    <string name="call_connection_failed">Call connection failed</string>
+    <string name="microphone_muted">Microphone muted</string>
+    <string name="microphone_unmuted">Microphone unmuted</string>
+    <string name="use_end_call_button">Please use End Call button</string>
+
+    <!-- Status Messages -->
+    <string name="status_connecting">Status: Connecting…</string>
+    <string name="status_connected">Status: Connected</string>
+    <string name="status_authenticated">Status: Authenticated ✓</string>
+    <string name="status_error">Status: Connection Error</string>
+    <string name="starting_call">Starting call…</string>
+    <string name="accepting_call">Accepting call…</string>
+    <string name="calling">Calling…</string>
+    <string name="call_in_progress">Call in progress</string>
+    <string name="call_disconnected">Call disconnected</string>
+
+    <!-- Dialog Strings -->
+    <string name="incoming_call">Incoming Call</string>
+    <string name="call_from">Call from:\n%s</string>
+    <string name="accept">Accept</string>
+    <string name="reject">Reject</string>
+</resources>
