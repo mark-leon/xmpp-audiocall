@@ -1,62 +1,95 @@
 package com.example.xmppaudiocall
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.widget.Button
-import android.widget.EditText
-import android.widget.TextView
-import android.widget.Toast
+import android.view.View
+import android.widget.*
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-
+import org.json.JSONObject
+import org.webrtc.IceCandidate
+import org.webrtc.PeerConnection
+import org.webrtc.SessionDescription
 
 class MainActivity : AppCompatActivity() {
 
-    companion object {
-        private const val PERMISSION_REQUEST_CODE = 1001
-        private val REQUIRED_PERMISSIONS = arrayOf(
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.MODIFY_AUDIO_SETTINGS,
-            Manifest.permission.INTERNET
-        )
-    }
-
+    // Login views
+    private lateinit var llLogin: LinearLayout
+    private lateinit var etServer: EditText
     private lateinit var etUsername: EditText
     private lateinit var etPassword: EditText
-    private lateinit var etServer: EditText
-    private lateinit var etContact: EditText
-    private lateinit var btnLogin: Button
-    private lateinit var btnCall: Button
-    private lateinit var tvStatus: TextView
+    private lateinit var btnConnect: Button
 
-    private lateinit var xmppManager: XMPPCallManager
+    // Connected views
+    private lateinit var llConnected: LinearLayout
+    private lateinit var tvStatus: TextView
+    private lateinit var tvMyJid: TextView
+    private lateinit var etRecipientJid: EditText
+    private lateinit var btnCall: Button
+    private lateinit var llCallControls: LinearLayout
+    private lateinit var tvCallStatus: TextView
+    private lateinit var btnEndCall: Button
+    private lateinit var btnDisconnect: Button
+
+    private var xmppClient: XMPPClient? = null
+    private var webRTCClient: WebRTCClient? = null
+
+    private var myJid: String = ""
+    private var remoteJid: String? = null
+    private var isCallActive = false
+    private val iceCandidateQueue = mutableListOf<String>()
+
+    private val PERMISSION_REQUEST_CODE = 1001
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Check and request permissions
-        if (!hasPermissions()) {
-            requestPermissions()
-        }
-
-        initializeViews()
-        initializeManagers()
-        setupClickListeners()
+        initViews()
+        requestPermissions()
     }
 
-    private fun hasPermissions(): Boolean {
-        return REQUIRED_PERMISSIONS.all {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
-        }
+    private fun initViews() {
+        // Login views
+        llLogin = findViewById(R.id.llLogin)
+        etServer = findViewById(R.id.etServer)
+        etUsername = findViewById(R.id.etUsername)
+        etPassword = findViewById(R.id.etPassword)
+        btnConnect = findViewById(R.id.btnConnect)
+
+        // Connected views
+        llConnected = findViewById(R.id.llConnected)
+        tvStatus = findViewById(R.id.tvStatus)
+        tvMyJid = findViewById(R.id.tvMyJid)
+        etRecipientJid = findViewById(R.id.etRecipientJid)
+        btnCall = findViewById(R.id.btnCall)
+        llCallControls = findViewById(R.id.llCallControls)
+        tvCallStatus = findViewById(R.id.tvCallStatus)
+        btnEndCall = findViewById(R.id.btnEndCall)
+        btnDisconnect = findViewById(R.id.btnDisconnect)
+
+        btnConnect.setOnClickListener { connectToXMPP() }
+        btnCall.setOnClickListener { initiateCall() }
+        btnEndCall.setOnClickListener { endCall() }
+        btnDisconnect.setOnClickListener { disconnectFromXMPP() }
     }
 
     private fun requestPermissions() {
-        ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, PERMISSION_REQUEST_CODE)
+        val permissions = arrayOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.MODIFY_AUDIO_SETTINGS
+        )
+
+        val notGranted = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (notGranted.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, notGranted.toTypedArray(), PERMISSION_REQUEST_CODE)
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -65,186 +98,239 @@ class MainActivity : AppCompatActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-
         if (requestCode == PERMISSION_REQUEST_CODE) {
-            if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                Toast.makeText(this, "Permissions granted", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this, "Permissions required for audio calls", Toast.LENGTH_LONG).show()
-                finish()
+            if (!grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                Toast.makeText(this, "Permissions required for audio call", Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    private fun initializeViews() {
-        etUsername = findViewById(R.id.etUsername)
-        etPassword = findViewById(R.id.etPassword)
-        etServer = findViewById(R.id.etServer)
-        etContact = findViewById(R.id.etContact)
-        btnLogin = findViewById(R.id.btnLogin)
-        btnCall = findViewById(R.id.btnCall)
-        tvStatus = findViewById(R.id.tvStatus)
+    private fun connectToXMPP() {
+        val server = etServer.text.toString().trim()
+        val username = etUsername.text.toString().trim()
+        val password = etPassword.text.toString().trim()
 
-        btnCall.isEnabled = false
+        if (server.isEmpty() || username.isEmpty() || password.isEmpty()) {
+            Toast.makeText(this, "Please fill all fields", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        btnConnect.isEnabled = false
+        btnConnect.text = "Connecting..."
+
+        initializeXMPPClient()
+        xmppClient?.connect(server, username, password)
     }
 
-    private fun initializeManagers() {
-        xmppManager = XMPPCallManager(this)
-
-        xmppManager.setCallListener(object : XMPPCallManager.CallListener {
-            override fun onIncomingCall(from: String, sessionId: String, sdpOffer: String) {
+    private fun initializeXMPPClient() {
+        xmppClient = XMPPClient(object : XMPPClient.XMPPListener {
+            override fun onConnected(jid: String) {
                 runOnUiThread {
-                    showIncomingCallDialog(from, sessionId, sdpOffer)
+                    myJid = jid
+                    tvMyJid.text = "Your JID: $jid"
+                    llLogin.visibility = View.GONE
+                    llConnected.visibility = View.VISIBLE
+                    Toast.makeText(this@MainActivity, "Connected to XMPP", Toast.LENGTH_SHORT).show()
+
+                    initializeWebRTC()
                 }
             }
 
-            override fun onCallAccepted(sessionId: String, sdpAnswer: String) {
+            override fun onConnectionFailed(error: String) {
                 runOnUiThread {
-                    tvStatus.text = "Call accepted"
-                    // WebRTC manager in CallActivity will handle the answer
+                    btnConnect.isEnabled = true
+                    btnConnect.text = "Connect to XMPP"
+                    Toast.makeText(this@MainActivity, "Connection failed: $error", Toast.LENGTH_LONG).show()
                 }
             }
 
-            override fun onCallRejected(sessionId: String) {
+            override fun onMessageReceived(from: String, message: String) {
+                handleSignalingMessage(from, message)
+            }
+
+            override fun onDisconnected() {
                 runOnUiThread {
-                    tvStatus.text = "Call rejected"
-                    Toast.makeText(this@MainActivity, "Call was rejected", Toast.LENGTH_SHORT).show()
+                    llLogin.visibility = View.VISIBLE
+                    llConnected.visibility = View.GONE
+                    btnConnect.isEnabled = true
+                    btnConnect.text = "Connect to XMPP"
+                    Toast.makeText(this@MainActivity, "Disconnected from XMPP", Toast.LENGTH_SHORT).show()
+                }
+            }
+        })
+    }
+
+    private fun initializeWebRTC() {
+        webRTCClient = WebRTCClient(applicationContext, object : WebRTCClient.WebRTCListener {
+            override fun onIceCandidate(candidate: IceCandidate) {
+                remoteJid?.let { jid ->
+                    val candidateString = "${candidate.sdpMid}|${candidate.sdpMLineIndex}|${candidate.sdp}"
+                    val json = JSONObject().apply {
+                        put("type", "ice-candidate")
+                        put("candidate", candidateString)
+                    }
+                    xmppClient?.sendMessage(jid, json.toString())
                 }
             }
 
-            override fun onCallEnded(sessionId: String) {
-                runOnUiThread {
-                    tvStatus.text = "Call ended"
-                    Toast.makeText(this@MainActivity, "Call ended", Toast.LENGTH_SHORT).show()
-                }
-            }
-
-            override fun onIceCandidate(
-                sessionId: String,
-                candidate: String,
-                sdpMid: String,
-                sdpMLineIndex: Int
-            ) {
-                // ICE candidates will be handled in CallActivity
-            }
-
-            override fun onConnectionStateChanged(state: XMPPCallManager.ConnectionState) {
+            override fun onConnectionStateChange(state: PeerConnection.PeerConnectionState) {
                 runOnUiThread {
                     when (state) {
-                        XMPPCallManager.ConnectionState.DISCONNECTED -> {
-                            tvStatus.text = "Status: Disconnected"
-                            btnCall.isEnabled = false
-                            btnLogin.isEnabled = true
+                        PeerConnection.PeerConnectionState.CONNECTED -> {
+                            tvCallStatus.text = "Connected - In Call"
+                            Toast.makeText(this@MainActivity, "Call connected!", Toast.LENGTH_SHORT).show()
                         }
-                        XMPPCallManager.ConnectionState.CONNECTING -> {
-                            tvStatus.text = "Status: Connecting..."
-                            btnLogin.isEnabled = false
+                        PeerConnection.PeerConnectionState.CONNECTING -> {
+                            tvCallStatus.text = "Connecting..."
                         }
-                        XMPPCallManager.ConnectionState.CONNECTED -> {
-                            tvStatus.text = "Status: Connected"
+                        PeerConnection.PeerConnectionState.DISCONNECTED,
+                        PeerConnection.PeerConnectionState.FAILED,
+                        PeerConnection.PeerConnectionState.CLOSED -> {
+                            endCall()
+                            Toast.makeText(this@MainActivity, "Call ended", Toast.LENGTH_SHORT).show()
                         }
-                        XMPPCallManager.ConnectionState.AUTHENTICATED -> {
-                            tvStatus.text = "Status: Authenticated ✓"
-                            btnCall.isEnabled = true
-                            btnLogin.isEnabled = false
-                        }
-                        XMPPCallManager.ConnectionState.ERROR -> {
-                            tvStatus.text = "Status: Connection Error"
-                            btnCall.isEnabled = false
-                            btnLogin.isEnabled = true
-                        }
+                        else -> {}
                     }
                 }
             }
         })
-
-        // Store XMPP manager globally
-        (application as XMPPApplication).xmppManager = xmppManager
     }
 
-    private fun setupClickListeners() {
-        btnLogin.setOnClickListener {
-            val username = etUsername.text.toString().trim()
-            val password = etPassword.text.toString().trim()
-            val server = etServer.text.toString().trim().ifEmpty { "your-ejabberd-server.com" }
+    private fun initiateCall() {
+        val recipientJid = etRecipientJid.text.toString().trim()
 
-            if (username.isEmpty() || password.isEmpty()) {
-                Toast.makeText(this, "Please enter username and password", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            connectToXMPP(username, password, server)
+        if (recipientJid.isEmpty()) {
+            Toast.makeText(this, "Please enter recipient JID", Toast.LENGTH_SHORT).show()
+            return
         }
 
-        btnCall.setOnClickListener {
-            val contact = etContact.text.toString().trim()
+        remoteJid = recipientJid
+        isCallActive = true
+        llCallControls.visibility = View.VISIBLE
+        tvCallStatus.text = "Calling..."
 
-            if (contact.isEmpty()) {
-                Toast.makeText(this, "Please enter contact JID", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
+        webRTCClient?.createPeerConnection()
+        webRTCClient?.createOffer { offer ->
+            val json = JSONObject().apply {
+                put("type", "offer")
+                put("sdp", offer)
             }
-
-            if (!contact.contains("@")) {
-                Toast.makeText(this, "Contact must be in format: user@server", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            startOutgoingCall(contact)
+            xmppClient?.sendMessage(recipientJid, json.toString())
         }
     }
 
-    private fun connectToXMPP(username: String, password: String, server: String) {
-        Thread {
-            try {
-                xmppManager.connect(username, password, server)
-            } catch (e: Exception) {
-                runOnUiThread {
-                    tvStatus.text = "Connection failed: ${e.message}"
-                    Toast.makeText(this, "Failed to connect: ${e.message}", Toast.LENGTH_LONG).show()
+    private fun handleSignalingMessage(from: String, message: String) {
+        try {
+            println("DEBUG: Received message from $from: $message")  // Add this
+            val json = JSONObject(message)
+            val type = json.getString("type")
+
+            when (type) {
+                "offer" -> {
+                    println("DEBUG: Received offer")  // Add this
+                    val sdp = json.getString("sdp")
+                    runOnUiThread {
+                        showIncomingCallDialog(from, sdp)
+                    }
+                }
+                "answer" -> {
+                    println("DEBUG: Received answer")  // Add this
+                    val sdp = json.getString("sdp")
+                    webRTCClient?.setRemoteDescription(sdp, SessionDescription.Type.ANSWER)
+
+                    runOnUiThread {
+                        iceCandidateQueue.forEach { candidate ->
+                            webRTCClient?.addIceCandidate(candidate)
+                        }
+                        iceCandidateQueue.clear()
+                    }
+                }
+                "ice-candidate" -> {
+                    println("DEBUG: Received ICE candidate")  // Add this
+                    val candidate = json.getString("candidate")
+
+                    val state = webRTCClient?.getConnectionState()
+                    if (state != null && state != PeerConnection.PeerConnectionState.NEW) {
+                        webRTCClient?.addIceCandidate(candidate)
+                    } else {
+                        iceCandidateQueue.add(candidate)
+                    }
                 }
             }
-        }.start()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            runOnUiThread {
+                Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
-    private fun showIncomingCallDialog(from: String, sessionId: String, sdpOffer: String) {
+    private fun showIncomingCallDialog(fromJid: String, offer: String) {
         AlertDialog.Builder(this)
             .setTitle("Incoming Call")
-            .setMessage("Call from:\n$from")
-            .setPositiveButton("Accept") { dialog, _ ->
-                dialog.dismiss()
-                startIncomingCall(from, sessionId, sdpOffer)
+            .setMessage("Call from $fromJid")
+            .setCancelable(false)
+            .setPositiveButton("Accept") { _, _ ->
+                acceptCall(fromJid, offer)
             }
             .setNegativeButton("Reject") { dialog, _ ->
                 dialog.dismiss()
-                xmppManager.endCall(sessionId)
-                Toast.makeText(this, "Call rejected", Toast.LENGTH_SHORT).show()
+                // Optionally send rejection message
             }
-            .setCancelable(false)
             .show()
     }
 
-    private fun startOutgoingCall(contactJid: String) {
-        val intent = Intent(this, CallActivity::class.java).apply {
-            putExtra("call_type", "outgoing")
-            putExtra("contact_jid", contactJid)
-        }
-        startActivity(intent)
+    private fun acceptCall(fromJid: String, offer: String) {
+        remoteJid = fromJid
+        isCallActive = true
+        llCallControls.visibility = View.VISIBLE
+        tvCallStatus.text = "Connecting..."
+        etRecipientJid.setText(fromJid)  // Fill in the JID field
+
+        webRTCClient?.createPeerConnection()
+        webRTCClient?.setRemoteDescription(offer, SessionDescription.Type.OFFER)
+
+        // Small delay to ensure remote description is set
+        android.os.Handler(mainLooper).postDelayed({
+            webRTCClient?.createAnswer { answer ->
+                val json = JSONObject().apply {
+                    put("type", "answer")
+                    put("sdp", answer)
+                }
+                xmppClient?.sendMessage(fromJid, json.toString())
+
+                // Process queued ICE candidates after creating answer
+                iceCandidateQueue.forEach { candidate ->
+                    webRTCClient?.addIceCandidate(candidate)
+                }
+                iceCandidateQueue.clear()
+            }
+        }, 100)
     }
 
-    private fun startIncomingCall(from: String, sessionId: String, sdpOffer: String) {
-        val intent = Intent(this, CallActivity::class.java).apply {
-            putExtra("call_type", "incoming")
-            putExtra("contact_jid", from)
-            putExtra("session_id", sessionId)
-            putExtra("sdp_offer", sdpOffer)
+    private fun endCall() {
+        if (!isCallActive) return
+
+        isCallActive = false
+        webRTCClient?.close()
+        remoteJid = null
+        iceCandidateQueue.clear()
+
+        runOnUiThread {
+            llCallControls.visibility = View.GONE
+            tvStatus.text = "Connected"
         }
-        startActivity(intent)
+    }
+
+    private fun disconnectFromXMPP() {
+        endCall()
+        xmppClient?.disconnect()
+        webRTCClient?.dispose()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        if (isFinishing) {
-            xmppManager.disconnect()
-        }
+        xmppClient?.disconnect()
+        webRTCClient?.dispose()
     }
 }
