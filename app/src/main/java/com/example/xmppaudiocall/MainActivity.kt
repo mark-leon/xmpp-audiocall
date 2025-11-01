@@ -11,8 +11,10 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import org.webrtc.IceCandidate
+import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.SessionDescription
+import org.webrtc.SurfaceViewRenderer
 
 class MainActivity : AppCompatActivity() {
 
@@ -28,11 +30,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var tvMyJid: TextView
     private lateinit var etRecipientJid: EditText
+    private lateinit var cbVideoCall: CheckBox
     private lateinit var btnCall: Button
     private lateinit var llCallControls: LinearLayout
     private lateinit var tvCallStatus: TextView
     private lateinit var btnEndCall: Button
     private lateinit var btnDisconnect: Button
+
+    // Video views
+    private lateinit var llVideoViews: LinearLayout
+    private lateinit var localVideoView: SurfaceViewRenderer
+    private lateinit var remoteVideoView: SurfaceViewRenderer
 
     private var xmppClient: XMPPClient? = null
     private var webRTCClient: WebRTCClient? = null
@@ -40,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private var myJid: String = ""
     private var remoteJid: String? = null
     private var isCallActive = false
+    private var isVideoCall = false
     private val iceCandidateQueue = mutableListOf<String>()
 
     private val PERMISSION_REQUEST_CODE = 1001
@@ -65,11 +74,17 @@ class MainActivity : AppCompatActivity() {
         tvStatus = findViewById(R.id.tvStatus)
         tvMyJid = findViewById(R.id.tvMyJid)
         etRecipientJid = findViewById(R.id.etRecipientJid)
+        cbVideoCall = findViewById(R.id.cbVideoCall)
         btnCall = findViewById(R.id.btnCall)
         llCallControls = findViewById(R.id.llCallControls)
         tvCallStatus = findViewById(R.id.tvCallStatus)
         btnEndCall = findViewById(R.id.btnEndCall)
         btnDisconnect = findViewById(R.id.btnDisconnect)
+
+        // Video views
+        llVideoViews = findViewById(R.id.llVideoViews)
+        localVideoView = findViewById(R.id.localVideoView)
+        remoteVideoView = findViewById(R.id.remoteVideoView)
 
         btnConnect.setOnClickListener { connectToXMPP() }
         btnCall.setOnClickListener { initiateCall() }
@@ -80,7 +95,8 @@ class MainActivity : AppCompatActivity() {
     private fun requestPermissions() {
         val permissions = arrayOf(
             Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.MODIFY_AUDIO_SETTINGS
+            Manifest.permission.MODIFY_AUDIO_SETTINGS,
+            Manifest.permission.CAMERA
         )
 
         val notGranted = permissions.filter {
@@ -100,7 +116,7 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE) {
             if (!grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                Toast.makeText(this, "Permissions required for audio call", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Permissions required for audio/video call", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -177,7 +193,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     when (state) {
                         PeerConnection.PeerConnectionState.CONNECTED -> {
-                            tvCallStatus.text = "Connected - In Call"
+                            tvCallStatus.text = if (isVideoCall) "Video Call Connected" else "Audio Call Connected"
                             Toast.makeText(this@MainActivity, "Call connected!", Toast.LENGTH_SHORT).show()
                         }
                         PeerConnection.PeerConnectionState.CONNECTING -> {
@@ -193,6 +209,12 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+
+            override fun onAddRemoteStream(stream: MediaStream) {
+                runOnUiThread {
+                    stream.videoTracks?.firstOrNull()?.addSink(remoteVideoView)
+                }
+            }
         })
     }
 
@@ -206,14 +228,28 @@ class MainActivity : AppCompatActivity() {
 
         remoteJid = recipientJid
         isCallActive = true
+        isVideoCall = cbVideoCall.isChecked
         llCallControls.visibility = View.VISIBLE
-        tvCallStatus.text = "Calling..."
+        tvCallStatus.text = if (isVideoCall) "Video Calling..." else "Calling..."
 
-        webRTCClient?.createPeerConnection()
+        // Show video views if video call
+        if (isVideoCall) {
+            llVideoViews.visibility = View.VISIBLE
+        }
+
+        webRTCClient?.createPeerConnection(isVideoCall)
+
+        // Initialize local video view if video call
+        if (isVideoCall) {
+            webRTCClient?.initLocalVideoView(localVideoView)
+            webRTCClient?.initRemoteVideoView(remoteVideoView)
+        }
+
         webRTCClient?.createOffer { offer ->
             val json = JSONObject().apply {
                 put("type", "offer")
                 put("sdp", offer)
+                put("isVideo", isVideoCall)
             }
             xmppClient?.sendMessage(recipientJid, json.toString())
         }
@@ -221,20 +257,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleSignalingMessage(from: String, message: String) {
         try {
-            println("DEBUG: Received message from $from: $message")  // Add this
+            println("DEBUG: Received message from $from: $message")
             val json = JSONObject(message)
             val type = json.getString("type")
 
             when (type) {
                 "offer" -> {
-                    println("DEBUG: Received offer")  // Add this
+                    println("DEBUG: Received offer")
                     val sdp = json.getString("sdp")
+                    val isVideo = json.optBoolean("isVideo", false)
                     runOnUiThread {
-                        showIncomingCallDialog(from, sdp)
+                        showIncomingCallDialog(from, sdp, isVideo)
                     }
                 }
                 "answer" -> {
-                    println("DEBUG: Received answer")  // Add this
+                    println("DEBUG: Received answer")
                     val sdp = json.getString("sdp")
                     webRTCClient?.setRemoteDescription(sdp, SessionDescription.Type.ANSWER)
 
@@ -246,7 +283,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 "ice-candidate" -> {
-                    println("DEBUG: Received ICE candidate")  // Add this
+                    println("DEBUG: Received ICE candidate")
                     val candidate = json.getString("candidate")
 
                     val state = webRTCClient?.getConnectionState()
@@ -265,32 +302,44 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showIncomingCallDialog(fromJid: String, offer: String) {
+    private fun showIncomingCallDialog(fromJid: String, offer: String, isVideo: Boolean) {
+        val callType = if (isVideo) "Video Call" else "Audio Call"
         AlertDialog.Builder(this)
-            .setTitle("Incoming Call")
-            .setMessage("Call from $fromJid")
+            .setTitle("Incoming $callType")
+            .setMessage("$callType from $fromJid")
             .setCancelable(false)
             .setPositiveButton("Accept") { _, _ ->
-                acceptCall(fromJid, offer)
+                acceptCall(fromJid, offer, isVideo)
             }
             .setNegativeButton("Reject") { dialog, _ ->
                 dialog.dismiss()
-                // Optionally send rejection message
             }
             .show()
     }
 
-    private fun acceptCall(fromJid: String, offer: String) {
+    private fun acceptCall(fromJid: String, offer: String, isVideo: Boolean) {
         remoteJid = fromJid
         isCallActive = true
+        isVideoCall = isVideo
         llCallControls.visibility = View.VISIBLE
         tvCallStatus.text = "Connecting..."
-        etRecipientJid.setText(fromJid)  // Fill in the JID field
+        etRecipientJid.setText(fromJid)
 
-        webRTCClient?.createPeerConnection()
+        // Show video views if video call
+        if (isVideoCall) {
+            llVideoViews.visibility = View.VISIBLE
+        }
+
+        webRTCClient?.createPeerConnection(isVideoCall)
+
+        // Initialize video views if video call
+        if (isVideoCall) {
+            webRTCClient?.initLocalVideoView(localVideoView)
+            webRTCClient?.initRemoteVideoView(remoteVideoView)
+        }
+
         webRTCClient?.setRemoteDescription(offer, SessionDescription.Type.OFFER)
 
-        // Small delay to ensure remote description is set
         android.os.Handler(mainLooper).postDelayed({
             webRTCClient?.createAnswer { answer ->
                 val json = JSONObject().apply {
@@ -299,7 +348,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 xmppClient?.sendMessage(fromJid, json.toString())
 
-                // Process queued ICE candidates after creating answer
                 iceCandidateQueue.forEach { candidate ->
                     webRTCClient?.addIceCandidate(candidate)
                 }
@@ -318,7 +366,16 @@ class MainActivity : AppCompatActivity() {
 
         runOnUiThread {
             llCallControls.visibility = View.GONE
+            llVideoViews.visibility = View.GONE
             tvStatus.text = "Connected"
+
+            // Release video views
+            try {
+                localVideoView.release()
+                remoteVideoView.release()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 

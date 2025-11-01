@@ -14,7 +14,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="XMPP WebRTC Audio Call"
+            android:text="XMPP WebRTC Audio/Video Call"
             android:textSize="20sp"
             android:textStyle="bold"
             android:layout_marginBottom="16dp" />
@@ -39,6 +39,7 @@
                 android:inputType="text"
                 android:layout_marginBottom="8dp" />
 
+
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -52,6 +53,7 @@
                 android:text="leion"
                 android:inputType="text"
                 android:layout_marginBottom="8dp" />
+
 
             <TextView
                 android:layout_width="wrap_content"
@@ -126,6 +128,13 @@
                 android:layout_height="wrap_content"
                 android:text="rafin@ejabberd.arafinahmed.com"
                 android:inputType="textEmailAddress"
+                android:layout_marginBottom="12dp" />
+
+            <CheckBox
+                android:id="@+id/cbVideoCall"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Video Call (enable camera)"
                 android:layout_marginBottom="16dp" />
 
             <Button
@@ -134,6 +143,53 @@
                 android:layout_height="wrap_content"
                 android:text="Call"
                 android:backgroundTint="#4CAF50" />
+
+            <!-- Video Views Section -->
+            <LinearLayout
+                android:id="@+id/llVideoViews"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="16dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Remote Video:"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="300dp"
+                    android:background="#000000"
+                    android:layout_marginBottom="12dp">
+
+                    <org.webrtc.SurfaceViewRenderer
+                        android:id="@+id/remoteVideoView"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent" />
+                </FrameLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Local Video (You):"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="200dp"
+                    android:background="#000000">
+
+                    <org.webrtc.SurfaceViewRenderer
+                        android:id="@+id/localVideoView"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent" />
+                </FrameLayout>
+            </LinearLayout>
 
             <!-- Call Controls -->
             <LinearLayout
